@@ -1,0 +1,102 @@
+name: Multi-Region Safe Phased Deployment
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  ACR_SERVER: acrkel2bcp2026kr.azurecr.io
+  ACR_USER: acrkel2bcp2026kr
+  IMAGE_NAME: academic-portal
+  RG_NAME: rg-konsorsium-bcp
+  APP_REGION_A: app-kel2bcp2026-indonesiacentral
+  APP_REGION_B: app-kel2bcp2026-eastasia
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Kode
+        uses: actions/checkout@v4
+
+      - name: Login ke Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_SERVER }}
+          username: ${{ env.ACR_USER }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build dan Push Image Aplikasi
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  deploy-region-a:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login ke Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy ke Region A (Indonesia Central)
+        run: |
+          az containerapp update \
+            --name ${{ env.APP_REGION_A }} \
+            --resource-group ${{ env.RG_NAME }} \
+            --image ${{ env.ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp ingress update \
+            --name ${{ env.APP_REGION_A }} \
+            --resource-group ${{ env.RG_NAME }} \
+            --target-port 8000
+
+      - name: Smoke Test Region A (/health/ready)
+        run: |
+          FQDN=$(az containerapp show -n ${{ env.APP_REGION_A }} -g ${{ env.RG_NAME }} --query properties.configuration.ingress.fqdn -o tsv)
+          for i in {1..10}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://$FQDN/health/ready)
+            if [ "$STATUS" -eq 200 ]; then
+              echo "Region A SEHAT (HTTP 200)!"
+              exit 0
+            fi
+            sleep 6
+          done
+          exit 1
+
+  deploy-region-b:
+    needs: deploy-region-a
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login ke Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy ke Region B (East Asia)
+        run: |
+          az containerapp update \
+            --name ${{ env.APP_REGION_B }} \
+            --resource-group ${{ env.RG_NAME }} \
+            --image ${{ env.ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp ingress update \
+            --name ${{ env.APP_REGION_B }} \
+            --resource-group ${{ env.RG_NAME }} \
+            --target-port 8000
+
+      - name: Smoke Test Region B (/health/ready)
+        run: |
+          FQDN=$(az containerapp show -n ${{ env.APP_REGION_B }} -g ${{ env.RG_NAME }} --query properties.configuration.ingress.fqdn -o tsv)
+          for i in {1..10}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://$FQDN/health/ready)
+            if [ "$STATUS" -eq 200 ]; then
+              echo "Region B SEHAT (HTTP 200)! Rollout Multi-Region Selesai."
+              exit 0
+            fi
+            sleep 6
+          done
+          exit 1
