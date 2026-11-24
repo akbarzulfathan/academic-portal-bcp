@@ -46,6 +46,10 @@ jobs:
 
       - name: Deploy ke Region A (Indonesia Central)
         run: |
+          az containerapp identity remove \
+            --name ${{ env.APP_REGION_A }} \
+            --resource-group ${{ env.RG_NAME }} \
+            --system-assigned || true
           az containerapp update \
             --name ${{ env.APP_REGION_A }} \
             --resource-group ${{ env.RG_NAME }} \
@@ -79,6 +83,10 @@ jobs:
 
       - name: Deploy ke Region B (East Asia)
         run: |
+          az containerapp identity remove \
+            --name ${{ env.APP_REGION_B }} \
+            --resource-group ${{ env.RG_NAME }} \
+            --system-assigned || true
           az containerapp update \
             --name ${{ env.APP_REGION_B }} \
             --resource-group ${{ env.RG_NAME }} \
