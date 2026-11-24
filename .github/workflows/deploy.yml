@@ -46,10 +46,12 @@ jobs:
 
       - name: Deploy ke Region A (Indonesia Central)
         run: |
-          az containerapp identity remove \
+          az containerapp registry set \
             --name ${{ env.APP_REGION_A }} \
             --resource-group ${{ env.RG_NAME }} \
-            --system-assigned || true
+            --server ${{ env.ACR_SERVER }} \
+            --username ${{ env.ACR_USER }} \
+            --password ${{ secrets.ACR_PASSWORD }}
           az containerapp update \
             --name ${{ env.APP_REGION_A }} \
             --resource-group ${{ env.RG_NAME }} \
@@ -83,10 +85,12 @@ jobs:
 
       - name: Deploy ke Region B (East Asia)
         run: |
-          az containerapp identity remove \
+          az containerapp registry set \
             --name ${{ env.APP_REGION_B }} \
             --resource-group ${{ env.RG_NAME }} \
-            --system-assigned || true
+            --server ${{ env.ACR_SERVER }} \
+            --username ${{ env.ACR_USER }} \
+            --password ${{ secrets.ACR_PASSWORD }}
           az containerapp update \
             --name ${{ env.APP_REGION_B }} \
             --resource-group ${{ env.RG_NAME }} \
