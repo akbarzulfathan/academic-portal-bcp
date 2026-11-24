@@ -7,12 +7,10 @@ on:
   workflow_dispatch:
 
 env:
-  ACR_SERVER: acrkel2bcp2026kr.azurecr.io
-  ACR_USER: acrkel2bcp2026kr
+  ACR_NAME: acrkel2bcp2026kr
   IMAGE_NAME: academic-portal
   RG_NAME: rg-konsorsium-bcp
-  APP_REGION_A: app-kel2bcp2026-indonesiacentral
-  APP_REGION_B: app-kel2bcp2026-eastasia
+  PREFIX: kel2bcp2026
 
 jobs:
   build-and-push:
@@ -21,72 +19,57 @@ jobs:
       - name: Checkout Kode
         uses: actions/checkout@v4
 
-      - name: Login ke Azure Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.ACR_SERVER }}
-          username: ${{ env.ACR_USER }}
-          password: ${{ secrets.ACR_PASSWORD }}
-
-      - name: Build dan Push Image Aplikasi
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ env.ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+      - name: Login dan Build Push via Docker CLI
+        env:
+          ACR_PWD: ${{ secrets.ACR_PASSWORD }}
+          SHA: ${{ github.sha }}
+        run: |
+          SERVER=$(echo "$ACR_NAME" | awk '{print $1".azurecr.io"}')
+          echo "$ACR_PWD" | docker login "$SERVER" -u "$ACR_NAME" --password-stdin
+          docker build -t "$SERVER/$IMAGE_NAME:$SHA" .
+          docker push "$SERVER/$IMAGE_NAME:$SHA"
 
   deploy-region-a:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Kode
+        uses: actions/checkout@v4
+
       - name: Login ke Azure
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Deploy ke Region A (Indonesia Central)
+      - name: Deploy Stamp Region A (Indonesia Central)
         env:
           ACR_PWD: ${{ secrets.ACR_PASSWORD }}
-          IMG_TAG: ${{ github.sha }}
+          SHA: ${{ github.sha }}
         run: |
-          SUB_ID=$(az account show --query id -o tsv)
-          URI="https://azure.com"
-          cat << EOF > payload.json
-          {
-            "properties": {
-              "configuration": {
-                "ingress": { "external": true, "targetPort": 8000, "transport": "http" },
-                "secrets": [{ "name": "acr-pwd", "value": "$ACR_PWD" }],
-                "registries": [{ "server": "$ACR_SERVER", "username": "$ACR_USER", "passwordSecretRef": "acr-pwd" }]
-              },
-              "template": {
-                "containers": [{
-                  "name": "academic-portal",
-                  "image": "$ACR_SERVER/$IMAGE_NAME:$IMG_TAG",
-                  "resources": { "cpu": 0.5, "memory": "1.0Gi" },
-                  "env": [
-                    { "name": "REGION_NAME", "value": "indonesiacentral" },
-                    { "name": "USE_MOCK", "value": "true" }
-                  ],
-                  "probes": [
-                    { "type": "Liveness", "httpGet": { "path": "/health/live", "port": 8000 }, "periodSeconds": 10 },
-                    { "type": "Readiness", "httpGet": { "path": "/health/ready", "port": 8000 }, "periodSeconds": 10 }
-                  ]
-                }]
-              }
-            }
-          }
-          EOF
-          az rest --method patch --uri "$URI" --body @payload.json
+          SERVER=$(az acr show -n $ACR_NAME -g $RG_NAME --query loginServer -o tsv)
+          az deployment group create \
+            --resource-group $RG_NAME \
+            --template-file infra/stamp.bicep \
+            --parameters \
+              location=indonesiacentral \
+              prefix=$PREFIX \
+              acrLoginServer=$SERVER \
+              acrUsername=$ACR_NAME \
+              acrPassword=$ACR_PWD \
+              containerImage=$SERVER/$IMAGE_NAME:$SHA \
+              probePath=/health/ready \
+              targetPort=8000
 
-      - name: Smoke Test Region A (/health/ready)
+      - name: Smoke Test Region A
         run: |
-          FQDN=$(az containerapp show -n $APP_REGION_A -g $RG_NAME --query properties.configuration.ingress.fqdn -o tsv)
+          FQDN=$(az containerapp show -n app-$PREFIX-indonesiacentral -g $RG_NAME --query properties.configuration.ingress.fqdn -o tsv)
+          PROTO="https"
+          TARGET="$PROTO://$FQDN/health/ready"
           for i in {1..15}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://$FQDN/health/ready)
-            echo "Percobaan $i: HTTP $STATUS"
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$TARGET")
+            echo "Cek Region A ($i): HTTP $STATUS"
             if [ "$STATUS" -eq 200 ]; then
-              echo "Region A SEHAT (HTTP 200)!"
+              echo "Region A SEHAT!"
               exit 0
             fi
             sleep 6
@@ -97,54 +80,43 @@ jobs:
     needs: deploy-region-a
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Kode
+        uses: actions/checkout@v4
+
       - name: Login ke Azure
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Deploy ke Region B (East Asia)
+      - name: Deploy Stamp Region B (East Asia)
         env:
           ACR_PWD: ${{ secrets.ACR_PASSWORD }}
-          IMG_TAG: ${{ github.sha }}
+          SHA: ${{ github.sha }}
         run: |
-          SUB_ID=$(az account show --query id -o tsv)
-          URI="https://azure.com"
-          cat << EOF > payload.json
-          {
-            "properties": {
-              "configuration": {
-                "ingress": { "external": true, "targetPort": 8000, "transport": "http" },
-                "secrets": [{ "name": "acr-pwd", "value": "$ACR_PWD" }],
-                "registries": [{ "server": "$ACR_SERVER", "username": "$ACR_USER", "passwordSecretRef": "acr-pwd" }]
-              },
-              "template": {
-                "containers": [{
-                  "name": "academic-portal",
-                  "image": "$ACR_SERVER/$IMAGE_NAME:$IMG_TAG",
-                  "resources": { "cpu": 0.5, "memory": "1.0Gi" },
-                  "env": [
-                    { "name": "REGION_NAME", "value": "eastasia" },
-                    { "name": "USE_MOCK", "value": "true" }
-                  ],
-                  "probes": [
-                    { "type": "Liveness", "httpGet": { "path": "/health/live", "port": 8000 }, "periodSeconds": 10 },
-                    { "type": "Readiness", "httpGet": { "path": "/health/ready", "port": 8000 }, "periodSeconds": 10 }
-                  ]
-                }]
-              }
-            }
-          }
-          EOF
-          az rest --method patch --uri "$URI" --body @payload.json
+          SERVER=$(az acr show -n $ACR_NAME -g $RG_NAME --query loginServer -o tsv)
+          az deployment group create \
+            --resource-group $RG_NAME \
+            --template-file infra/stamp.bicep \
+            --parameters \
+              location=eastasia \
+              prefix=$PREFIX \
+              acrLoginServer=$SERVER \
+              acrUsername=$ACR_NAME \
+              acrPassword=$ACR_PWD \
+              containerImage=$SERVER/$IMAGE_NAME:$SHA \
+              probePath=/health/ready \
+              targetPort=8000
 
-      - name: Smoke Test Region B (/health/ready)
+      - name: Smoke Test Region B
         run: |
-          FQDN=$(az containerapp show -n $APP_REGION_B -g $RG_NAME --query properties.configuration.ingress.fqdn -o tsv)
+          FQDN=$(az containerapp show -n app-$PREFIX-eastasia -g $RG_NAME --query properties.configuration.ingress.fqdn -o tsv)
+          PROTO="https"
+          TARGET="$PROTO://$FQDN/health/ready"
           for i in {1..15}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://$FQDN/health/ready)
-            echo "Percobaan $i: HTTP $STATUS"
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$TARGET")
+            echo "Cek Region B ($i): HTTP $STATUS"
             if [ "$STATUS" -eq 200 ]; then
-              echo "Region B SEHAT (HTTP 200)! Rollout Multi-Region Selesai."
+              echo "Region B SEHAT! Rollout Selesai."
               exit 0
             fi
             sleep 6
