@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <title>Portal Akademik Konsorsium - Uji Multi-Region</title>
+    <script src="https://tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 p-6 font-sans">
+    <div class="max-w-4xl mx-auto space-y-6">
+        <div class="flex justify-between items-center bg-slate-800 p-4 rounded-lg border border-slate-700">
+            <div>
+                <h1 class="text-xl font-bold text-sky-400">Portal Layanan Akademik Terpadu</h1>
+                <p class="text-sm text-slate-400">Objek Uji Multi-Region & Business Continuity</p>
+            </div>
+            <div class="text-right">
+                <span class="text-xs uppercase text-slate-400">Dilayani Oleh Region:</span>
+                <div id="active-region" class="text-lg font-mono font-bold text-emerald-400">Memuat...</div>
+            </div>
+        </div>
+
+        <!-- Panel Status Kesehatan & Chaos -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="bg-slate-800 p-4 rounded-lg border border-slate-700">
+                <h2 class="font-semibold mb-2 text-amber-400">Status Deep Health (/health/ready)</h2>
+                <pre id="health-box" class="bg-slate-950 p-3 rounded text-xs font-mono overflow-auto h-36"></pre>
+                <button onclick="checkHealth()" class="mt-3 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-sm">Refresh Health</button>
+            </div>
+
+            <div class="bg-slate-800 p-4 rounded-lg border border-slate-700">
+                <h2 class="font-semibold mb-2 text-rose-400">Panel Simulasi Gangguan (Chaos Lokal)</h2>
+                <div class="space-y-2 text-sm">
+                    <button onclick="setChaos({db_healthy: false})" class="w-full bg-rose-700 hover:bg-rose-600 py-1.5 rounded">Matikan DB Region Ini (Trigger 503)</button>
+                    <button onclick="setChaos({latency_ms: 2500})" class="w-full bg-amber-700 hover:bg-amber-600 py-1.5 rounded">Suntik Gray Failure (Latensi 2.5s)</button>
+                    <button onclick="setChaos({db_healthy: true, kv_healthy: true, redis_healthy: true, latency_ms: 0, error_rate: 0})" class="w-full bg-emerald-700 hover:bg-emerald-600 py-1.5 rounded">Pulihkan Semua (Failback Normal)</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Panel Uji Pembayaran UKT & Idempotency -->
+        <div class="bg-slate-800 p-4 rounded-lg border border-slate-700">
+            <h2 class="font-semibold mb-3 text-sky-400">Uji Kritis: Pembayaran UKT (RPO = 0 & Idempotency)</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                <input id="nim" value="240199021" placeholder="NIM" class="bg-slate-900 border border-slate-600 p-2 rounded text-sm">
+                <input id="nominal" type="number" value="5500000" placeholder="Nominal UKT" class="bg-slate-900 border border-slate-600 p-2 rounded text-sm">
+                <div class="flex gap-1">
+                    <input id="idem-key" class="bg-slate-900 border border-slate-600 p-2 rounded text-xs font-mono w-full" readonly>
+                    <button onclick="newKey()" class="bg-slate-700 px-2 rounded text-xs" title="Buat Kunci Baru">🔄</button>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="payUKT()" class="bg-sky-600 hover:bg-sky-500 px-4 py-2 rounded text-sm font-semibold">Kirim Pembayaran UKT</button>
+                <button onclick="submitKRS()" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded text-sm font-semibold">Uji Simpan KRS</button>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">💡 Klik "Kirim Pembayaran UKT" dua kali tanpa mengganti kunci untuk membuktikan perlindungan anti-duplikasi pembayaran.</p>
+            <pre id="tx-result" class="bg-slate-950 p-3 rounded text-xs font-mono mt-3 overflow-auto max-h-48">Hasil transaksi akan tampil di sini...</pre>
+        </div>
+    </div>
+
+    <script>
+        function newKey() {
+            document.getElementById('idem-key').value = 'IDEM-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+        }
+        async function checkHealth() {
+            const res = await fetch('/health/ready');
+            document.getElementById('active-region').innerText = res.headers.get('X-Served-By-Region') || 'Unknown';
+            const data = await res.json();
+            document.getElementById('health-box').innerText = `HTTP ${res.status}\n` + JSON.stringify(data, null, 2);
+        }
+        async function setChaos(payload) {
+            await fetch('/chaos/inject', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+            checkHealth();
+        }
+        async function payUKT() {
+            const res = await fetch('/api/payments/ukt', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Idempotency-Key': document.getElementById('idem-key').value
+                },
+                body: JSON.stringify({
+                    nim: document.getElementById('nim').value,
+                    nominal: parseInt(document.getElementById('nominal').value)
+                })
+            });
+            const data = await res.json();
+            document.getElementById('tx-result').innerText = `HTTP ${res.status}\n` + JSON.stringify(data, null, 2);
+        }
+        async function submitKRS() {
+            const res = await fetch('/api/krs', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ nim: document.getElementById('nim').value, kode_mk: ['IF401', 'IF402'] })
+            });
+            const data = await res.json();
+            document.getElementById('tx-result').innerText = `HTTP ${res.status}\n` + JSON.stringify(data, null, 2);
+        }
+        newKey();
+        checkHealth();
+    </script>
+</body>
+</html>
