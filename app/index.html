@@ -2,100 +2,173 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Portal Akademik Konsorsium - Uji Multi-Region</title>
-    <script src="https://tailwindcss.com"></script>
+    <title>Portal Akademik Konsorsium - Multi-Region BCP</title>
+    <style>
+        * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+        body { background: #0f172a; color: #f1f5f9; margin: 0; padding: 20px; }
+        .container { max-width: 1050px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-left: 5px solid #38bdf8; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .grid-3 { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 10px; }
+        h1 { margin: 0; font-size: 1.3rem; color: #38bdf8; }
+        h2 { margin: 0 0 10px 0; font-size: 1rem; color: #fbbf24; display: flex; justify-content: space-between; align-items: center; }
+        .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; background: #334155; color: #cbd5e1; font-weight: 600; }
+        .region-tag { font-family: monospace; font-size: 1.25rem; font-weight: bold; color: #34d399; }
+        select, input { width: 100%; background: #0f172a; color: #f8fafc; border: 1px solid #475569; padding: 8px 10px; border-radius: 6px; font-size: 0.85rem; }
+        button { cursor: pointer; border: none; border-radius: 6px; padding: 8px 12px; font-size: 0.82rem; font-weight: 600; color: white; transition: opacity 0.15s; }
+        button:hover { opacity: 0.88; }
+        .btn-blue { background: #0284c7; }
+        .btn-indigo { background: #4f46e5; }
+        .btn-teal { background: #0d9488; }
+        .btn-red { background: #be123c; width: 100%; margin-bottom: 6px; }
+        .btn-amber { background: #b45309; width: 100%; margin-bottom: 6px; }
+        .btn-green { background: #047857; width: 100%; }
+        .btn-gray { background: #475569; }
+        pre { background: #020617; color: #a7f3d0; padding: 10px; border-radius: 6px; font-size: 0.76rem; overflow: auto; margin: 8px 0 0 0; max-height: 165px; border: 1px solid #1e293b; }
+        .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .subtext { font-size: 0.78rem; color: #94a3b8; margin: 4px 0 0 0; }
+    </style>
 </head>
-<body class="bg-slate-900 text-slate-100 p-6 font-sans">
-    <div class="max-w-4xl mx-auto space-y-6">
-        <div class="flex justify-between items-center bg-slate-800 p-4 rounded-lg border border-slate-700">
-            <div>
-                <h1 class="text-xl font-bold text-sky-400">Portal Layanan Akademik Terpadu</h1>
-                <p class="text-sm text-slate-400">Objek Uji Multi-Region & Business Continuity</p>
-            </div>
-            <div class="text-right">
-                <span class="text-xs uppercase text-slate-400">Dilayani Oleh Region:</span>
-                <div id="active-region" class="text-lg font-mono font-bold text-emerald-400">Memuat...</div>
-            </div>
+<body>
+<div class="container">
+    <div class="card header">
+        <div>
+            <h1>Portal Layanan Akademik Terpadu (Unimal)</h1>
+            <p class="subtext">Objek Uji Arsitektur Multi-Region & Business Continuity (UU PDP / ISO 22301)</p>
         </div>
-
-        <!-- Panel Status Kesehatan & Chaos -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="bg-slate-800 p-4 rounded-lg border border-slate-700">
-                <h2 class="font-semibold mb-2 text-amber-400">Status Deep Health (/health/ready)</h2>
-                <pre id="health-box" class="bg-slate-950 p-3 rounded text-xs font-mono overflow-auto h-36"></pre>
-                <button onclick="checkHealth()" class="mt-3 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-sm">Refresh Health</button>
-            </div>
-
-            <div class="bg-slate-800 p-4 rounded-lg border border-slate-700">
-                <h2 class="font-semibold mb-2 text-rose-400">Panel Simulasi Gangguan (Chaos Lokal)</h2>
-                <div class="space-y-2 text-sm">
-                    <button onclick="setChaos({db_healthy: false})" class="w-full bg-rose-700 hover:bg-rose-600 py-1.5 rounded">Matikan DB Region Ini (Trigger 503)</button>
-                    <button onclick="setChaos({latency_ms: 2500})" class="w-full bg-amber-700 hover:bg-amber-600 py-1.5 rounded">Suntik Gray Failure (Latensi 2.5s)</button>
-                    <button onclick="setChaos({db_healthy: true, kv_healthy: true, redis_healthy: true, latency_ms: 0, error_rate: 0})" class="w-full bg-emerald-700 hover:bg-emerald-600 py-1.5 rounded">Pulihkan Semua (Failback Normal)</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Panel Uji Pembayaran UKT & Idempotency -->
-        <div class="bg-slate-800 p-4 rounded-lg border border-slate-700">
-            <h2 class="font-semibold mb-3 text-sky-400">Uji Kritis: Pembayaran UKT (RPO = 0 & Idempotency)</h2>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-                <input id="nim" value="240199021" placeholder="NIM" class="bg-slate-900 border border-slate-600 p-2 rounded text-sm">
-                <input id="nominal" type="number" value="5500000" placeholder="Nominal UKT" class="bg-slate-900 border border-slate-600 p-2 rounded text-sm">
-                <div class="flex gap-1">
-                    <input id="idem-key" class="bg-slate-900 border border-slate-600 p-2 rounded text-xs font-mono w-full" readonly>
-                    <button onclick="newKey()" class="bg-slate-700 px-2 rounded text-xs" title="Buat Kunci Baru">🔄</button>
-                </div>
-            </div>
-            <div class="flex gap-2">
-                <button onclick="payUKT()" class="bg-sky-600 hover:bg-sky-500 px-4 py-2 rounded text-sm font-semibold">Kirim Pembayaran UKT</button>
-                <button onclick="submitKRS()" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded text-sm font-semibold">Uji Simpan KRS</button>
-            </div>
-            <p class="text-xs text-slate-400 mt-2">💡 Klik "Kirim Pembayaran UKT" dua kali tanpa mengganti kunci untuk membuktikan perlindungan anti-duplikasi pembayaran.</p>
-            <pre id="tx-result" class="bg-slate-950 p-3 rounded text-xs font-mono mt-3 overflow-auto max-h-48">Hasil transaksi akan tampil di sini...</pre>
+        <div style="text-align: right;">
+            <span class="subtext">DILAYANI OLEH REGION AKTIF:</span>
+            <div id="active-region" class="region-tag">Memuat...</div>
         </div>
     </div>
 
-    <script>
-        function newKey() {
-            document.getElementById('idem-key').value = 'IDEM-' + Math.random().toString(36).substring(2, 10).toUpperCase();
-        }
-        async function checkHealth() {
-            const res = await fetch('/health/ready');
-            document.getElementById('active-region').innerText = res.headers.get('X-Served-By-Region') || 'Unknown';
-            const data = await res.json();
-            document.getElementById('health-box').innerText = `HTTP ${res.status}\n` + JSON.stringify(data, null, 2);
-        }
-        async function setChaos(payload) {
-            await fetch('/chaos/inject', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
-            checkHealth();
-        }
-        async function payUKT() {
-            const res = await fetch('/api/payments/ukt', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Idempotency-Key': document.getElementById('idem-key').value
-                },
-                body: JSON.stringify({
-                    nim: document.getElementById('nim').value,
-                    nominal: parseInt(document.getElementById('nominal').value)
-                })
-            });
-            const data = await res.json();
-            document.getElementById('tx-result').innerText = `HTTP ${res.status}\n` + JSON.stringify(data, null, 2);
-        }
-        async function submitKRS() {
-            const res = await fetch('/api/krs', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ nim: document.getElementById('nim').value, kode_mk: ['IF401', 'IF402'] })
-            });
-            const data = await res.json();
-            document.getElementById('tx-result').innerText = `HTTP ${res.status}\n` + JSON.stringify(data, null, 2);
-        }
+    <!-- Pilih Mahasiswa Aktif & SSO Login -->
+    <div class="card">
+        <h2>Profil Mahasiswa Uji & Ketergantungan Eksternal <span class="badge">Pemilik: TI & BAAK</span></h2>
+        <div class="grid-3">
+            <div>
+                <label class="subtext">Pilih Mahasiswa Dummy:</label>
+                <select id="student-select" onchange="syncStudent()">
+                    <option value="230170200" data-ukt="5500000" data-email="zulfathan.230170200@mhs.unimal.ac.id">Zulfathan Akbar (230170200)</option>
+                    <option value="240170017" data-ukt="5000000" data-email="sucia.240170017@mhs.unimal.ac.id">Sucia Nurmadani (240170017)</option>
+                    <option value="240170078" data-ukt="5000000" data-email="safarul.240170078@mhs.unimal.ac.id">Safarul Akbar (240170078)</option>
+                    <option value="240170134" data-ukt="5500000" data-email="salma.240170134@mhs.unimal.ac.id">Salma Rasika Naisyla (240170134)</option>
+                    <option value="240170152" data-ukt="5000000" data-email="reifan.240170152@mhs.unimal.ac.id">Reifan Aldi Putra Faisa (240170152)</option>
+                    <option value="240170210" data-ukt="5500000" data-email="rifqa.240170210@mhs.unimal.ac.id">Rifqa Ramadhani (240170210)</option>
+                </select>
+            </div>
+            <div>
+                <label class="subtext">Email Kampus (Notifikasi):</label>
+                <input id="email-view" value="zulfathan.230170200@mhs.unimal.ac.id" readonly>
+            </div>
+            <div>
+                <label class="subtext">Tagihan UKT (Rp):</label>
+                <input id="nominal" type="number" value="5500000">
+            </div>
+        </div>
+        <div class="btn-row">
+            <button class="btn-indigo" onclick="testLogin()">1. Login SSO (Entra ID)</button>
+            <button class="btn-teal" onclick="loadAnnouncements()">2. Cek Pengumuman (Cosmos DB)</button>
+            <button class="btn-teal" onclick="loadCatalog()">3. Cek Katalog MK (Cosmos DB)</button>
+            <button class="btn-gray" onclick="downloadDoc('KHS')">4. Unduh KHS/Transkrip (Blob)</button>
+        </div>
+    </div>
+
+    <!-- Transaksi Kritis UKT & KRS -->
+    <div class="card">
+        <h2>Layanan Transaksional Kritis: Pembayaran UKT (RPO=0) & Pengisian KRS <span class="badge">Pemilik: Keuangan & BAAK</span></h2>
+        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+            <span class="subtext" style="white-space: nowrap;">Idempotency-Key:</span>
+            <input id="idem-key" readonly style="font-family: monospace;">
+            <button class="btn-gray" onclick="newKey()">Buat Key Baru 🔄</button>
+        </div>
+        <div class="btn-row">
+            <button class="btn-blue" onclick="payUKT()">Bayar UKT + Kirim Email Bukti (Sandbox Gateway)</button>
+            <button class="btn-indigo" onclick="submitKRS()">Simpan KRS Semester Ini (SQL Failover)</button>
+        </div>
+        <p class="subtext">💡 Klik "Bayar UKT" 2x berturut-turut tanpa ganti Key untuk membuktikan anti-pendebetan ganda (Idempotency) & pengiriman notifikasi email.</p>
+        <pre id="tx-result">Output respons layanan akan tampil di sini...</pre>
+    </div>
+
+    <!-- Deep Health & Chaos Panel -->
+    <div class="grid-2">
+        <div class="card">
+            <h2>Deep Health Probe (/health/ready) <span class="badge">Pemilik: TI</span></h2>
+            <pre id="health-box">Memeriksa kesehatan komponen...</pre>
+            <div class="btn-row">
+                <button class="btn-gray" onclick="checkHealth()">Refresh Health Probe</button>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Kontrol Simulasi Gangguan (Chaos Lokal) <span class="badge">Uji BCP</span></h2>
+            <button class="btn-red" onclick="setChaos({db_healthy: false})">Matikan DB Region Ini (Trigger HTTP 503)</button>
+            <button class="btn-amber" onclick="setChaos({latency_ms: 2000, error_rate: 0.3})">Suntik Gray Failure (Latensi 2s + Error 30%)</button>
+            <button class="btn-green" onclick="setChaos({db_healthy: true, kv_healthy: true, redis_healthy: true, latency_ms: 0, error_rate: 0})">Pulihkan Semua Normal (Failback HTTP 200)</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    function getNim() { return document.getElementById('student-select').value; }
+    function syncStudent() {
+        const opt = document.getElementById('student-select').selectedOptions[0];
+        document.getElementById('email-view').value = opt.getAttribute('data-email');
+        document.getElementById('nominal').value = opt.getAttribute('data-ukt');
         newKey();
+    }
+    function newKey() {
+        document.getElementById('idem-key').value = 'IDEM-' + getNim() + '-' + Math.random().toString(36).substring(2, 7).toUpperCase();
+    }
+    function showOutput(status, data) {
+        document.getElementById('tx-result').innerText = `HTTP ${status}\n` + JSON.stringify(data, null, 2);
+    }
+    async function checkHealth() {
+        const res = await fetch('/health/ready');
+        document.getElementById('active-region').innerText = res.headers.get('X-Served-By-Region') || 'Unknown';
+        showHealth(res.status, await res.json());
+    }
+    function showHealth(status, data) {
+        document.getElementById('health-box').innerText = `HTTP ${status}\n` + JSON.stringify(data, null, 2);
+    }
+    async function setChaos(payload) {
+        await fetch('/chaos/inject', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
         checkHealth();
-    </script>
+    }
+    async function testLogin() {
+        const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nim: getNim()}) });
+        showOutput(res.status, await res.json());
+    }
+    async function loadAnnouncements() {
+        const res = await fetch('/api/announcements');
+        showOutput(res.status, await res.json());
+    }
+    async function loadCatalog() {
+        const res = await fetch('/api/catalog');
+        showOutput(res.status, await res.json());
+    }
+    async function downloadDoc(type) {
+        const res = await fetch(`/api/documents/${type}?nim=${getNim()}`);
+        showOutput(res.status, await res.json());
+    }
+    async function payUKT() {
+        const res = await fetch('/api/payments/ukt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Idempotency-Key': document.getElementById('idem-key').value },
+            body: JSON.stringify({ nim: getNim(), nominal: parseInt(document.getElementById('nominal').value) })
+        });
+        showOutput(res.status, await res.json());
+    }
+    async function submitKRS() {
+        const res = await fetch('/api/krs', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ nim: getNim(), kode_mk: ['TIF401', 'TIF402', 'TIF403'] })
+        });
+        showOutput(res.status, await res.json());
+    }
+    newKey();
+    checkHealth();
+</script>
 </body>
 </html>

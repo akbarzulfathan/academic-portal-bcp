@@ -8,33 +8,49 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import Optional
 
-app = FastAPI(title="Portal Akademik Terpadu - Multi-Region Testbed")
+app = FastAPI(title="Portal Layanan Akademik Terpadu - Multi-Region BCP")
 
-# --- KONFIGURASI STATIC STABILITY (Murni membaca Environment Lokal Region) ---
 REGION_NAME = os.getenv("REGION_NAME", "local-dev-region")
 USE_MOCK = os.getenv("USE_MOCK", "true").lower() == "true"
 
-# Variabel simulasi Chaos / Gangguan Lokal untuk Pengujian Tahap 8
 CHAOS_STATE = {
     "db_healthy": True,
     "redis_healthy": True,
     "kv_healthy": True,
-    "latency_ms": 0,      # Untuk simulasi Gray Failure (Skenario 4)
-    "error_rate": 0.0     # 0.0 - 1.0 untuk simulasi error sebagian
+    "latency_ms": 0,
+    "error_rate": 0.0
 }
 
-# Penyimpanan In-Memory (Fallback/Mock saat dijalankan tanpa Azure DB aktif)
-MOCK_ANNOUNCEMENTS = [
-    {"id": "1", "title": "Batas Akhir Pembayaran UKT Semester Ganjil", "category": "Keuangan", "region_origin": REGION_NAME},
-    {"id": "2", "title": "Jadwal Pengisian KRS Serentak Konsorsium", "category": "BAAK", "region_origin": REGION_NAME},
-]
-MOCK_KRS_DB = []
-MOCK_PAYMENTS_DB = {}  # Menyimpan {idempotency_key: data_transaksi} -> Mencegah tagihan ganda!
+# --- DATA DUMMY MAHASISWA KONSORSIUM (UNIMAL) ---
+STUDENTS_DB = {
+    "230170200": {"nim": "230170200", "nama": "Zulfathan Akbar", "email": "zulfathan.230170200@mhs.unimal.ac.id", "ukt": 5500000},
+    "240170017": {"nim": "240170017", "nama": "Sucia Nurmadani", "email": "sucia.240170017@mhs.unimal.ac.id", "ukt": 5000000},
+    "240170078": {"nim": "240170078", "nama": "Safarul Akbar", "email": "safarul.240170078@mhs.unimal.ac.id", "ukt": 5000000},
+    "240170134": {"nim": "240170134", "nama": "Salma Rasika Naisyla", "email": "salma.240170134@mhs.unimal.ac.id", "ukt": 5500000},
+    "240170152": {"nim": "240170152", "nama": "Reifan Aldi Putra Faisa", "email": "reifan.240170152@mhs.unimal.ac.id", "ukt": 5000000},
+    "240170210": {"nim": "240170210", "nama": "Rifqa Ramadhani", "email": "rifqa.240170210@mhs.unimal.ac.id", "ukt": 5500000},
+}
 
-# --- MIDDLEWARE: HEADER REGION & SIMULASI GRAY FAILURE ---
+# --- DATA BACA-INTENSIF: PENGUMUMAN & KATALOG MATA KULIAH (COSMOS DB PATTERN) ---
+MOCK_ANNOUNCEMENTS = [
+    {"id": "ANN-01", "title": "Batas Akhir Pembayaran UKT Semester Ganjil (Periode Kritis)", "owner": "Keuangan", "region_origin": REGION_NAME},
+    {"id": "ANN-02", "title": "Jadwal Pengisian KRS Serentak Mahasiswa", "owner": "BAAK", "region_origin": REGION_NAME},
+    {"id": "ANN-03", "title": "Pemeliharaan SSO Microsoft Entra ID Terpadu", "owner": "TI", "region_origin": REGION_NAME},
+]
+
+MOCK_CATALOG = [
+    {"kode": "TIF401", "mk": "Komputasi Awan & Keberlangsungan Bisnis", "sks": 3, "kuota": 45, "owner": "BAAK"},
+    {"kode": "TIF402", "mk": "Arsitektur Sistem Terdistribusi", "sks": 3, "kuota": 40, "owner": "BAAK"},
+    {"kode": "TIF403", "mk": "Keamanan Jaringan & Kepatuhan Data", "sks": 3, "kuota": 40, "owner": "BAAK"},
+    {"kode": "TIF404", "mk": "Rekayasa Keandalan Situs (SRE)", "sks": 3, "kuota": 35, "owner": "BAAK"},
+]
+
+MOCK_KRS_DB = []
+MOCK_PAYMENTS_DB = {}
+MOCK_NOTIFICATIONS_LOG = []
+
 @app.middleware("http")
 async def region_and_chaos_middleware(request: Request, call_next):
-    # Simulasi latensi tinggi jika Chaos diaktifkan (kecuali endpoint kontrol chaos)
     if not request.url.path.startswith("/chaos"):
         if CHAOS_STATE["latency_ms"] > 0:
             time.sleep(CHAOS_STATE["latency_ms"] / 1000.0)
@@ -42,11 +58,12 @@ async def region_and_chaos_middleware(request: Request, call_next):
             return Response(content='{"detail": "Simulated Gray Failure Error"}', status_code=500, media_type="application/json")
 
     response = await call_next(request)
-    # Header wajib agar Skrip Probe tahu Region mana yang membalas request
     response.headers["X-Served-By-Region"] = REGION_NAME
     return response
 
-# --- MODEL DATA ---
+class LoginRequest(BaseModel):
+    nim: str
+
 class KRSRequest(BaseModel):
     nim: str
     kode_mk: list[str]
@@ -62,128 +79,162 @@ class ChaosConfig(BaseModel):
     latency_ms: Optional[int] = None
     error_rate: Optional[float] = None
 
-# --- 1. DEEP HEALTH MODEL (Tahap 7) ---
+def resolve_student(nim: str) -> dict:
+    return STUDENTS_DB.get(nim, {
+        "nim": nim,
+        "nama": "Mahasiswa Konsorsium",
+        "email": f"mhs.{nim}@mhs.unimal.ac.id",
+        "ukt": 5000000
+    })
+
+# --- 1. DEEP HEALTH MODEL ---
 @app.get("/health/live")
 def liveness_probe():
-    """Memastikan proses container hidup."""
-    return {"status": "ALIVE", "region": REGION_NAME}
+    return {"status": "ALIVE", "owner": "TI", "region": REGION_NAME}
 
 @app.get("/health/ready")
 def readiness_probe(response: Response):
-    """
-    Diperiksa oleh Azure Front Door setiap beberapa detik.
-    Memeriksa dependensi kritis regional (DB, Cache, Key Vault) agar tidak terjadi 'blind routing'.
-    """
     checks = {
         "database_local": CHAOS_STATE["db_healthy"],
         "redis_cache_local": CHAOS_STATE["redis_healthy"],
-        "keyvault_local": CHAOS_STATE["kv_healthy"]
+        "keyvault_local": CHAOS_STATE["kv_healthy"],
+        "entra_id_sso_sandbox": True,
+        "payment_gateway_sandbox": True,
+        "email_notification_service": True
     }
-    
-    # Di produksi Azure (USE_MOCK=false), tambahkan ping nyata ke SQL/Cosmos/KeyVault di sini
     all_critical_healthy = checks["database_local"] and checks["keyvault_local"]
-    
-    # Cache Redis mati tidak membuat region mati total (Static Stability: aplikasi jalan walau cache kosong)
     health_status = "GREEN" if all(checks.values()) else ("YELLOW" if all_critical_healthy else "RED")
 
     if not all_critical_healthy:
-        response.status_code = 503  # Memberi sinyal ke Front Door untuk memindahkan trafik ke Region sebelah!
+        response.status_code = 503
 
     return {
         "status": health_status,
+        "service_owner": "TI",
         "region": REGION_NAME,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "dependencies": checks
     }
 
-# --- 2. FUNGSI BISNIS (Tahap 1 & Tahap 3) ---
-
+# --- 2. FUNGSI BISNIS LENGKAP BESERTA PEMILIKNYA (TI, BAAK, KEUANGAN) ---
 @app.get("/", response_class=HTMLResponse)
 def serve_ui():
     with open(os.path.join(os.path.dirname(__file__), "index.html"), "r", encoding="utf-8") as f:
         return f.read()
 
+@app.get("/api/students")
+def list_students():
+    return {"service_owner": "BAAK", "region": REGION_NAME, "students": list(STUDENTS_DB.values())}
+
 @app.post("/api/login")
-def mock_login(nim: str = "2026001"):
-    """Simulasi token Entra ID / Managed Identity."""
-    return {"message": "Login berhasil", "nim": nim, "token": f"ey-mock-{REGION_NAME}-{uuid.uuid4().hex[:6]}", "region": REGION_NAME}
+def mock_login(payload: Optional[LoginRequest] = None, nim: str = "230170200"):
+    target_nim = payload.nim if payload else nim
+    mhs = resolve_student(target_nim)
+    return {
+        "service": "Autentikasi SSO (Microsoft Entra ID Sandbox)",
+        "service_owner": "TI",
+        "status": "AUTHENTICATED",
+        "student": mhs,
+        "entra_token": f"eyJ0eXAiOiJKV1QiLCJyZWciOiJ{REGION_NAME[:5]}-{uuid.uuid4().hex[:6]}",
+        "region": REGION_NAME
+    }
 
 @app.get("/api/announcements")
 def get_announcements():
-    """Pola: Active-Active Multi-Region Reads/Writes (Cosmos DB Eventual/Session)."""
     if not CHAOS_STATE["db_healthy"]:
-        raise HTTPException(status_code=503, detail="Database pengumuman tidak dapat diakses")
-    return {"region": REGION_NAME, "data": MOCK_ANNOUNCEMENTS}
+        raise HTTPException(status_code=503, detail="Cosmos DB pengumuman tidak dapat diakses")
+    return {"service": "Pengumuman Kampus", "service_owner": "BAAK & Keuangan", "region": REGION_NAME, "data": MOCK_ANNOUNCEMENTS}
+
+@app.get("/api/catalog")
+def get_catalog():
+    if not CHAOS_STATE["db_healthy"]:
+        raise HTTPException(status_code=503, detail="Cosmos DB katalog mata kuliah tidak dapat diakses")
+    return {"service": "Katalog Mata Kuliah (Read-Intensive)", "service_owner": "BAAK", "region": REGION_NAME, "courses": MOCK_CATALOG}
 
 @app.post("/api/krs")
 def submit_krs(payload: KRSRequest):
-    """Pola: Single-Writer dengan Auto-Failover (Mencegah bentrok pengisian KRS)."""
     if not CHAOS_STATE["db_healthy"]:
-        raise HTTPException(status_code=503, detail="Database KRS sedang failover / tidak tersedia")
-    
+        raise HTTPException(status_code=503, detail="SQL Database KRS sedang failover / tidak tersedia")
+
+    mhs = resolve_student(payload.nim)
+    notif = f"Email konfirmasi KRS dikirim ke {mhs['email']}"
     record = {
-        "krs_id": str(uuid.uuid4()),
-        "nim": payload.nim,
+        "krs_id": f"KRS-{uuid.uuid4().hex[:6].upper()}",
+        "service_owner": "BAAK",
+        "nim": mhs["nim"],
+        "nama": mhs["nama"],
+        "email": mhs["email"],
         "kode_mk": payload.kode_mk,
+        "notification": notif,
         "processed_by_region": REGION_NAME,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     MOCK_KRS_DB.append(record)
-    return {"status": "SUCCESS", "data": record}
+    return {"status": "SUCCESS", "service_owner": "BAAK", "data": record}
 
 @app.post("/api/payments/ukt")
 def pay_ukt(
     payload: PaymentRequest,
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
-    """
-    Pola Kritis (RPO = 0): Single-Writer + Wajib Idempotency-Key.
-    Jika klien melakukan retry saat terjadi failover dari Region A ke B, pembayaran TIDAK tercatat ganda.
-    """
     if not idempotency_key:
-        raise HTTPException(status_code=400, detail="Header 'Idempotency-Key' wajib disertakan untuk transaksi UKT!")
-    
-    if not CHAOS_STATE["db_healthy"]:
-        raise HTTPException(status_code=503, detail="Database Transaksi tidak tersedia")
+        raise HTTPException(status_code=400, detail="Header 'Idempotency-Key' wajib disertakan!")
 
-    # Cek apakah transaksi dengan kunci ini sudah pernah diproses sebelumnya
+    if not CHAOS_STATE["db_healthy"]:
+        raise HTTPException(status_code=503, detail="SQL Database Transaksi UKT tidak tersedia")
+
+    mhs = resolve_student(payload.nim)
+
     if idempotency_key in MOCK_PAYMENTS_DB:
         existing_tx = MOCK_PAYMENTS_DB[idempotency_key]
         return {
             "status": "IDEMPOTENT_REPLAY",
+            "service_owner": "Keuangan",
             "message": "Transaksi sudah pernah dicatat. Mencegah pendebetan ganda!",
             "current_region": REGION_NAME,
             "transaction": existing_tx
         }
 
-    # Simpan transaksi baru
+    gateway_ref = f"SBX-GW-{uuid.uuid4().hex[:8].upper()}"
+    email_receipt = {
+        "to": mhs["email"],
+        "subject": f"Bukti Lunas UKT - {mhs['nama']} ({mhs['nim']})",
+        "status": "SENT_VIA_SMTP_SANDBOX"
+    }
+    MOCK_NOTIFICATIONS_LOG.append(email_receipt)
+
     new_tx = {
         "tx_id": f"PAY-{uuid.uuid4().hex[:8].upper()}",
         "idempotency_key": idempotency_key,
-        "nim": payload.nim,
+        "service_owner": "Keuangan",
+        "nim": mhs["nim"],
+        "nama": mhs["nama"],
+        "email": mhs["email"],
         "nominal": payload.nominal,
+        "payment_gateway_sandbox_ref": gateway_ref,
+        "email_notification": email_receipt,
         "status": "PAID",
         "origin_region": REGION_NAME,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     MOCK_PAYMENTS_DB[idempotency_key] = new_tx
-    return {"status": "CREATED", "current_region": REGION_NAME, "transaction": new_tx}
+    return {"status": "CREATED", "service_owner": "Keuangan", "current_region": REGION_NAME, "transaction": new_tx}
 
 @app.get("/api/documents/{doc_type}")
-def download_document(doc_type: str, nim: str = "2026001"):
-    """Pola: Active-Passive Read-Access Geo-Redundant Storage (Blob RA-GZRS)."""
+def download_document(doc_type: str, nim: str = "230170200"):
+    mhs = resolve_student(nim)
     return {
-        "doc_type": doc_type,
-        "nim": nim,
-        "storage_mode": "RA-GZRS",
+        "service": " Penyimpanan Dokumen Akademik (Azure Blob Storage)",
+        "service_owner": "BAAK",
+        "doc_type": doc_type.upper(),
+        "nim": mhs["nim"],
+        "nama": mhs["nama"],
         "served_from_region": REGION_NAME,
-        "download_url": f"https://mockstorage.{REGION_NAME}.blob.core.windows.net/docs/{doc_type}-{nim}.pdf"
+        "blob_file": f"{doc_type.lower()}_{mhs['nim']}_{REGION_NAME}.pdf"
     }
 
-# --- 3. ENDPOINT KONTROL CHAOS (Memudahkan Pengujian Mandiri Tahap 8) ---
 @app.post("/chaos/inject")
 def inject_chaos(config: ChaosConfig):
-    """Endpoint khusus pengujian untuk menyuntikkan kegagalan DB, KeyVault, atau Gray Failure."""
     for key, value in config.model_dump(exclude_none=True).items():
         CHAOS_STATE[key] = value
     return {"message": f"Konfigurasi Chaos di {REGION_NAME} diperbarui", "current_chaos_state": CHAOS_STATE}
